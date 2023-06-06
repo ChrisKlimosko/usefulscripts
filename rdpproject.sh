@@ -22,4 +22,4 @@ lines_per_part=$((total_lines / num_parts))
 split -l "$lines_per_part" "Open3389.txt" split_file
 count=$(wc -l split_fileaa | cut -d ' ' -f 1)
 
-echo "IP's have been split into $num_parts with $count IP's each"
+echo "IP's have been split into $num_parts files with $count IP's each"
