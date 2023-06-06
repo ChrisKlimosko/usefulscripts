@@ -4,6 +4,7 @@ Useful random scripts, mostly written by ChatGPT.
 * ***append_string_beg_each_line.sh*** - Append a string to the beginning of each line.
 * ***bulk_whois.sh*** - Reads all IP addresses from a txt file and performs a whois lookup. Can be modified for host lookup too.
 * ***delete_empty_folders.py*** - Looks for all empty folders in the PWD and cleans them up.
+* ***jpg_to_pdf.py*** - Puts 4 jpg files per page in a PDF document.
 * ***move_singles_back.py*** - Scans all folders within the PWD for folders containing a single file inside, then moves that file back into the parent directory.
 * ***rdpproject.sh*** - Pulls all open RDP ports in Edmonton from Shodan and sorts them into lists based on how many people are working on the project.
 * ***split_by_linecount.sh*** - User inputs how many lines they want to split a single file into.
