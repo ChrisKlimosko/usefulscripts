@@ -19,7 +19,7 @@ grep -B 8 open nmaptemp.txt | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" > "Open
 read -p "Enter the number of people working on the project: " num_parts
 total_lines=$(wc -l < "Open3389.txt")
 lines_per_part=$((total_lines / num_parts))
-split -l "$lines_per_part" "$file_path" split_file
-count=$(wc -l split_fileaa)
+split -l "$lines_per_part" "Open3389.txt" split_file
+count=$(wc -l split_fileaa | cut -d ' ' -f 1)
 
 echo "IP's have been split into $num_parts with $count IP's each"
