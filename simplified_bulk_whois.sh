@@ -17,6 +17,10 @@ fi
 # Perform WHOIS lookup for each IP address in the input file
 while IFS= read -r ip; do
     echo "WHOIS lookup for IP: $ip"
-    whois "$ip"
+    # Perform the WHOIS lookup and extract organization field
+    org=$(whois "$ip" | awk -F ':' '/^Organization:/ {print $2}')
+    # Print IP address and organization
+    echo "IP: $ip"
+    echo "Organization: $org"
     echo "-----------------------------------"
 done < "$input_file"

@@ -9,5 +9,6 @@ Useful random scripts, mostly written by AI and tweaked by TCU.
 * ***move_singles_back.py*** - Scans all folders within the PWD for folders containing a single file inside, then moves that file back into the parent directory.
 * ***rdpproject.sh*** - Pulls all open RDP ports in Edmonton from Shodan and sorts them into lists based on how many people are working on the project.
 * ***rename_seq_createdate.ps1*** - Renames all MP4 files within a directory, prepending a sequential number to them based on file creation time.
+* ***simplified_bulk_whois.sh*** - Bulk WHOIS but only prints the IP address and Organization name.
 * ***split_by_linecount.sh*** - User inputs how many lines they want to split a single file into.
 * ***split_equal_by_linecount.sh*** - User inputs how many files they want in the end and script will split equally among that number.
