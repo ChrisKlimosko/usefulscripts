@@ -13,4 +13,5 @@ Useful random scripts, mostly written by AI and tweaked by TCU.
 * ***simplified_bulk_whois.sh*** - Bulk WHOIS but only prints the IP address and Organization name.
 * ***split_by_linecount.sh*** - User inputs how many lines they want to split a single file into.
 * ***split_equal_by_linecount.sh*** - User inputs how many files they want in the end and script will split equally among that number.
+* ***VINdecode.sh*** - Extended VIN decode for vehicle details.
 * ***unrtf_and_join.sh*** - Looks in the present directory for any RTF formatted documents, converts them to text, and joins them together in one TXT file.
