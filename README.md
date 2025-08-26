@@ -1,5 +1,5 @@
 # usefulscripts
-Useful random scripts, mostly written by AI and tweaked by TCU.
+Useful random scripts for TCU day-to-day.
 
 * ***append_string_beg_each_line.sh*** - Append a string to the beginning of each line.
 * ***bulk_whois.sh*** - Reads all IP addresses from a txt file and performs a whois lookup. Can be modified for host lookup too.
