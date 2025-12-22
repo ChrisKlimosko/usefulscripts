@@ -4,6 +4,7 @@ Useful random scripts for TCU day-to-day.
 * ***append_string_beg_each_line.sh*** - Append a string to the beginning of each line.
 * ***bulk_whois.sh*** - Reads all IP addresses from a txt file and performs a whois lookup. Can be modified for host lookup too.
 * ***delete_empty_folders.py*** - Looks for all empty folders in the PWD and cleans them up.
+* ***FBprofileID.js*** - A JavaScript applet for automatically finding and displaying the Facebook Profile ID when browsing a profile.
 * ***finddupes.py*** - Calculates the MD5 of every file recursively and will indicate any duplicate files.
 * ***hash_script_1.sh*** - Automate Rhash with file prompt - AC
 * ***jpg_to_pdf.py*** - Puts 4 jpg files per page in a PDF document. - AC
