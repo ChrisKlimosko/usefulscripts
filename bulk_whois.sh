@@ -27,20 +27,39 @@ BASE_BACKOFF="${BASE_BACKOFF:-4}"
 SLEEP_BETWEEN="${SLEEP_BETWEEN:-2}"
 MIN_SERVER_INTERVAL="${MIN_SERVER_INTERVAL:-3}"
 MAX_REFERRALS="${MAX_REFERRALS:-2}"
+# auto  = only follow the registrar referral when the registry gave a THIN answer
+#         (thick registries like CIRA already return the full record, so following
+#         just duplicates it and wastes a query). always = always follow.
+#         never = never follow.
+FOLLOW_REFERRALS="${FOLLOW_REFERRALS:-auto}"
 OUTPUT_FILE="${OUTPUT_FILE:-}"
 
-FALLBACK_SERVERS=(whois.arin.net whois.ripe.net whois.apnic.net whois.lacnic.net whois.afrinic.net)
 
-# Per-server "last hit" timestamps, for rate limiting.
-declare -A LAST_HIT
+# --- Shared state ---
+# NOTE: run_whois/get_authoritative_server get called inside $( ) command
+# substitutions, which run in SUBSHELLS. Bash associative arrays written in a
+# subshell are lost when it exits, so rate-limit timestamps and the server cache
+# MUST live on disk to survive. (This is not premature cleverness; using plain
+# arrays here silently breaks both features.)
+STATE_DIR="$(mktemp -d)"
+
+_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
+
+state_get() { local f="$STATE_DIR/$(_key "$1")"; [[ -f "$f" ]] && cat "$f"; }
+state_has() { [[ -f "$STATE_DIR/$(_key "$1")" ]]; }
+state_set() { printf '%s' "$2" > "$STATE_DIR/$(_key "$1")"; }
+
+FALLBACK_SERVERS=(whois.arin.net whois.ripe.net whois.apnic.net whois.lacnic.net whois.afrinic.net)
 
 # --- Logging (always to stderr so it never pollutes results) ---
 log()  { printf '%s\n' "$*" >&2; }
 err()  { printf 'ERROR: %s\n' "$*" >&2; }
 
-# --- Clean exit on Ctrl-C / kill, instead of a stack of ugly messages ---
-cleanup() { log ""; log "Interrupted — stopping."; exit 130; }
-trap cleanup INT TERM
+# --- Clean exit on Ctrl-C / kill, and always remove the temp state dir ---
+cleanup_state() { [[ -n "${STATE_DIR:-}" ]] && rm -rf "$STATE_DIR"; }
+on_interrupt()  { log ""; log "Interrupted — stopping."; cleanup_state; exit 130; }
+trap on_interrupt INT TERM
+trap cleanup_state EXIT
 
 # --- Preflight checks ---
 command -v whois   >/dev/null 2>&1 || { err "'whois' is not installed (try: apt install whois)."; exit 1; }
@@ -84,13 +103,15 @@ is_rate_limited() {
 
 respect_rate_limit() {
   # Ensure at least MIN_SERVER_INTERVAL seconds since we last hit $1.
+  # Uses on-disk state so it works even when called from a subshell.
   local server="$1" now last wait
   [[ -z "$server" ]] && return 0
   now=$(date +%s)
-  last="${LAST_HIT[$server]:-0}"
+  last="$(state_get "hit:$server")"
+  last="${last:-0}"
   wait=$(( MIN_SERVER_INTERVAL - (now - last) ))
   if (( wait > 0 )); then sleep "$wait"; fi
-  LAST_HIT[$server]=$(date +%s)
+  state_set "hit:$server" "$(date +%s)"
 }
 
 run_whois() {
@@ -127,6 +148,38 @@ extract_iana_refer() {
     | tr -d '[:space:]'
 }
 
+looks_thin() {
+  # A registry response is "thin" if it carries essentially no contact record.
+  # Thick registries (e.g. CIRA) include Registrant/Admin/Tech sections — even
+  # when the values are REDACTED, the field labels are present. If those labels
+  # exist, the registrar referral would only duplicate what we already have.
+  ! printf '%s\n' "$1" | grep -qiE '^[[:space:]]*(Registrant|Admin|Tech|Billing) (Name|Organization|Email|Street|Country|Phone)'
+}
+
+_meaningful_lines() {
+  # Canonicalize a whois record for comparison: drop legal/comment/volatile
+  # boilerplate, trim, lowercase, sort-unique. Reads stdin.
+  grep -vE '^[[:space:]]*[%#]' \
+    | grep -vE '^[[:space:]]*>>>' \
+    | grep -viE 'last update of whois|for more information on whois|icann whois inaccuracy|terms of use|legal notice|registration authority|please visit|governed by' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | grep -vE '^$' \
+    | tr 'A-Z' 'a-z' \
+    | sort -u
+}
+
+referral_is_redundant() {
+  # Return 0 (redundant) if >=90% of the referral record's meaningful lines
+  # already appear in what we've printed so far. $1 = prior text, $2 = referral.
+  local a b bcount common
+  a=$(printf '%s\n' "$1" | _meaningful_lines)
+  b=$(printf '%s\n' "$2" | _meaningful_lines)
+  bcount=$(printf '%s\n' "$b" | grep -cvE '^$')
+  (( bcount == 0 )) && return 0
+  common=$(comm -12 <(printf '%s\n' "$a") <(printf '%s\n' "$b") | grep -cvE '^$')
+  (( common * 100 >= bcount * 90 ))
+}
+
 extract_referral_host() {
   # From a registry response, find the next hop:
   #   ARIN IP style : "ReferralServer: whois://host"
@@ -144,15 +197,34 @@ extract_referral_host() {
 
 get_authoritative_server() {
   # Ask IANA which server is authoritative for this target (works for TLDs & IPs).
-  local target="$1" kind="$2" iana srv
+  # Cached on disk: for domains the key is the TLD, so 20 .ca domains cost
+  # exactly ONE IANA query, not 20.
+  local target="$1" kind="$2" key iana srv
+
+  case "$kind" in
+    domain) key="srv:tld:${target##*.}" ;;   # example.ca -> srv:tld:ca
+    *)      key="srv:ip:${target}" ;;        # IPs must be resolved individually
+  esac
+
+  if state_has "$key"; then
+    state_get "$key"
+    return 0
+  fi
+
   iana=$(run_whois "whois.iana.org" "$target" || true)
   srv=$(printf '%s\n' "$iana" | extract_iana_refer || true)
-  if [[ -n "$srv" ]]; then printf '%s' "$srv"; return 0; fi
-  # No IANA answer: for IPs, fall back to ARIN; for domains, let the client decide.
-  case "$kind" in
-    ipv4|ipv6) printf '%s' "${FALLBACK_SERVERS[0]}" ;;
-    *)         printf '%s' "" ;;
-  esac
+
+  if [[ -z "$srv" ]]; then
+    # No IANA answer: for IPs fall back to ARIN; for domains let the whois
+    # client do its own TLD routing (empty string = client default).
+    case "$kind" in
+      ipv4|ipv6) srv="${FALLBACK_SERVERS[0]}" ;;
+      *)         srv="" ;;
+    esac
+  fi
+
+  state_set "$key" "$srv"   # cache negatives too, so we don't retry a dead end
+  printf '%s' "$srv"
 }
 
 # --- Argument handling ---
@@ -206,19 +278,42 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
   first=$(run_whois "$primary_srv" "$target" || true)
   printf '%s\n' "$first"
 
-  # Follow referral hops (registry -> registrar for domains, ARIN -> RIR for IPs).
-  prev_srv="$primary_srv"
-  current="$first"
-  for (( hop = 1; hop <= MAX_REFERRALS; hop++ )); do
-    referral=$(printf '%s\n' "$current" | extract_referral_host || true)
-    [[ -z "$referral" ]] && break
-    [[ "$referral" == "$prev_srv" ]] && break
-    echo
-    echo "---- Following referral -> $referral ----"
-    current=$(run_whois "$referral" "$target" || true)
-    printf '%s\n' "$current"
-    prev_srv="$referral"
-  done
+  # Decide whether to chase the registrar referral at all.
+  #   never  -> skip entirely
+  #   always -> follow (still suppressed if it turns out to be a duplicate)
+  #   auto   -> only when the registry answer was thin (missing a contact block)
+  follow_ok=0
+  case "$FOLLOW_REFERRALS" in
+    always) follow_ok=1 ;;
+    never)  follow_ok=0 ;;
+    auto)   looks_thin "$first" && follow_ok=1 ;;
+  esac
+
+  if (( follow_ok )); then
+    # Track every server queried for this target so we never hit one twice.
+    declare -A visited=()
+    visited["${primary_srv,,}"]=1
+    seen="$first"          # everything shown so far, for redundancy checks
+    current="$first"
+    for (( hop = 1; hop <= MAX_REFERRALS; hop++ )); do
+      referral=$(printf '%s\n' "$current" | extract_referral_host || true)
+      [[ -z "$referral" ]] && break
+      [[ -n "${visited[${referral,,}]+set}" ]] && break
+      visited["${referral,,}"]=1
+
+      resp=$(run_whois "$referral" "$target" || true)
+      if referral_is_redundant "$seen" "$resp"; then
+        echo
+        echo "---- Referral $referral returned no new data (skipped) ----"
+        break
+      fi
+      echo
+      echo "---- Following referral -> $referral ----"
+      printf '%s\n' "$resp"
+      seen+=$'\n'"$resp"
+      current="$resp"
+    done
+  fi
 
   done_ok=$(( done_ok + 1 ))
   echo "===================================================================="
